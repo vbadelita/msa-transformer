@@ -51,7 +51,7 @@ class TrainConfig:
     gradient_clip_val: float = 1.0
     max_epochs: int = 1000
     num_nodes: int = 1
-    precision: int = 32
+    precision: str = "32"
     patience: int = 10
     mask_prob: float = 0.15
     random_token_prob: float = 0.1
@@ -70,14 +70,14 @@ class LoggingConfig:
 class Config:
     # defaults: List[Any] = field(default_factory=lambda: defaults)
 
-    data: DataConfig = DataConfig()
-    train: TrainConfig = TrainConfig()
-    model: TransformerConfig = TransformerConfig()
-    optimizer: OptimizerConfig = OptimizerConfig()
-    logging: LoggingConfig = LoggingConfig()
+    data: DataConfig = field(default_factory=DataConfig)
+    train: TrainConfig = field(default_factory=TrainConfig)
+    model: TransformerConfig = field(default_factory=TransformerConfig)
+    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     fast_dev_run: bool = False
     resume_from_checkpoint: Optional[str] = None
-    val_check_interval: int = 1000  # Run validation every 1000 steps instead of 5000
+    val_check_interval: int = 1000
 
 
 cs = ConfigStore.instance()
@@ -91,6 +91,7 @@ cs.store(group="logging", name="default", node=LoggingConfig)
 
 @hydra.main(config_name="config")
 def train(cfg: Config) -> None:
+    torch.set_float32_matmul_precision('medium')
     alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
     vocab = Vocab.from_esm_alphabet(alphabet)
     train_data = EncodedFastaDataset(cfg.data.fasta_path, vocab)
@@ -150,10 +151,10 @@ def train(cfg: Config) -> None:
         else True
     )
 
-    # if isinstance(logger, pl.loggers.LightningLoggerBase):
-    #     logger.log_hyperparams(cfg.train)  # type: ignore
-    #     logger.log_hyperparams(cfg.model)  # type: ignore
-    #     logger.log_hyperparams(cfg.optimizer)  # type: ignore
+    if isinstance(logger, pl.loggers.Logger):
+        logger.log_hyperparams(cfg.train)  # type: ignore
+        logger.log_hyperparams(cfg.model)  # type: ignore
+        logger.log_hyperparams(cfg.optimizer)  # type: ignore
 
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         monitor="valid/Long Range P@L",
@@ -161,18 +162,17 @@ def train(cfg: Config) -> None:
         dirpath=current_directory / "checkpoints",
         save_top_k=5,
     )
-    early_stopping_callback = pl.callbacks.EarlyStopping(
-        monitor="valid/Long Range P@L",
-        mode="max",
-        min_delta=0.1,
-        patience=cfg.train.patience,
-    )
+    # early_stopping_callback = pl.callbacks.EarlyStopping(
+    #     monitor="valid/Long Range P@L",
+    #     mode="max",
+    #     patience=cfg.train.patience,
+    # )
     lr_logger = pl.callbacks.LearningRateMonitor()
 
     # See https://lightning.ai/docs/pytorch/stable/upgrade/from_1_4.html for:
     trainer = pl.Trainer(
         logger=logger,
-        callbacks=[early_stopping_callback, lr_logger, checkpoint_callback],
+        callbacks=[lr_logger, checkpoint_callback],
         accumulate_grad_batches=cfg.train.accumulate_grad_batches,
         accelerator=cfg.train.accelerator,
         fast_dev_run=cfg.fast_dev_run,
@@ -183,8 +183,8 @@ def train(cfg: Config) -> None:
         max_steps=cfg.optimizer.max_steps,
         num_nodes=cfg.train.num_nodes,
         precision=cfg.train.precision,
-        # val_check_interval=cfg.val_check_interval * cfg.train.accumulate_grad_batches,
-        val_check_interval=0.2,
+        val_check_interval=cfg.val_check_interval * cfg.train.accumulate_grad_batches,
+        # val_check_interval=0.2,
         strategy="ddp",
         use_distributed_sampler=False,
     )

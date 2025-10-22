@@ -48,8 +48,8 @@ class PKMLayerConfig(TransformerLayerConfig):
 
 @dataclass
 class TransformerConfig:
-    layer: TransformerLayerConfig = TransformerLayerConfig()
-    pkm: PKMLayerConfig = PKMLayerConfig()
+    layer: TransformerLayerConfig = field(default_factory=TransformerLayerConfig)
+    pkm: PKMLayerConfig = field(default_factory=PKMLayerConfig)
     num_layers: int = 12
     max_seqlen: int = 1024
     pkm_layers: List[int] = field(default_factory=list)
