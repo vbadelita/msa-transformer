@@ -153,8 +153,8 @@ class BaseProteinModel(pl.LightningModule, ABC):
                 "bias": torch.from_numpy(clf.intercept_),
             }
         )
-
-    def training_step(self, batch, batch_idx):
+    
+    def validate_protein_language(self, batch, log_name):
         src, tgt = batch
         logits = self(src)["logits"]
         valid_mask = tgt != self.vocab.pad_idx
@@ -165,12 +165,15 @@ class BaseProteinModel(pl.LightningModule, ABC):
         perplexity = loss.float().exp().mean()
         loss = loss.mean()
 
-        self.log("train/loss", loss, prog_bar=True)
-        self.log("train/perplexity", perplexity, prog_bar=True)
+        self.log(f"{log_name}/loss", loss, prog_bar=True)
+        self.log(f"{log_name}/perplexity", perplexity, prog_bar=True)
 
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def training_step(self, batch, batch_idx):
+        return self.validate_protein_language(batch, log_name="train")
+
+    def validate_protein_contact(self, batch):
         predictions = self.predict_contacts(batch["src_tokens"])
         metrics = compute_precisions(
             predictions,
@@ -179,36 +182,21 @@ class BaseProteinModel(pl.LightningModule, ABC):
             minsep=24,
         )
 
-        # # Compute LM loss on tokens (do not use contact targets)
-        # src_tokens = batch["src_tokens"]
-        # logits = self(src_tokens)["logits"]  # (..., T, V)
-
-        # # Next-token prediction: shift tokens to form targets
-        # # Supports both 2D (B, T) and 3D (B, R, C) token tensors
-        # lm_tgt = src_tokens[..., 1:]
-        # lm_logits = logits[..., :-1, :]
-
-        # # Flatten to (N, V) and (N,) for CrossEntropyLoss
-        # num_classes = lm_logits.size(-1)
-        # lm_logits_flat = lm_logits.reshape(-1, num_classes)
-        # lm_tgt_flat = lm_tgt.reshape(-1)
-
-        # # Mask out pads
-        # valid_mask_flat = lm_tgt_flat != self.vocab.pad_idx
-        # lm_logits_flat = lm_logits_flat[valid_mask_flat]
-        # lm_tgt_flat = lm_tgt_flat[valid_mask_flat]
-
-        # loss = nn.CrossEntropyLoss(reduction="none")(lm_logits_flat, lm_tgt_flat)
-        # perplexity = loss.float().exp().mean()
-        # loss = loss.mean()
-
-        # self.log("valid/loss", loss, prog_bar=True)
-        # self.log("valid/perplexity", perplexity, prog_bar=True)
-
         for key, value in metrics.items():
             key = f"valid/Long Range {key}"
             self.log(key, value.mean(), prog_bar=key.endswith("P@L"))
         return metrics["P@L"]
+
+
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
+        protein_contact_data = batch["P@L"]
+        if "sequence" in batch:
+            protein_sequence_data = batch["sequence"]
+            _ = self.validate_protein_language(protein_sequence_data, log_name="valid")
+            
+        loss = self.validate_protein_contact(protein_contact_data)
+        return loss   
+
 
     def configure_optimizers(self):
         no_decay = ["norm", "LayerNorm"]

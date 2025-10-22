@@ -1,4 +1,4 @@
-from typing import Optional, List, Any
+from typing import Optional
 import sys
 from pathlib import Path
 import logging
@@ -17,6 +17,7 @@ from dataset import TRRosettaContactDataset
 from dataclasses import dataclass, field
 import hydra
 from hydra.core.config_store import ConfigStore
+from pytorch_lightning.utilities import CombinedLoader
 
 
 root_logger = logging.getLogger()
@@ -34,7 +35,8 @@ current_directory = Path(__file__).parent.absolute()
 
 @dataclass
 class DataConfig:
-    fasta_path: str = str(current_directory / "data/trrosetta.fasta")
+    train_fasta_path: str = str(current_directory / "data/trrosetta.fasta")
+    valid_fasta_path: Optional[str] = None
     trrosetta_path: str = str(current_directory / "data" / "trrosetta")
     trrosetta_train_split: str = "valid_train.txt"
     trrosetta_valid_split: str = "valid_test.txt"
@@ -94,7 +96,7 @@ def train(cfg: Config) -> None:
     torch.set_float32_matmul_precision('medium')
     alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
     vocab = Vocab.from_esm_alphabet(alphabet)
-    train_data = EncodedFastaDataset(cfg.data.fasta_path, vocab)
+    train_data = EncodedFastaDataset(cfg.data.train_fasta_path, vocab)
     train_data = RandomCropDataset(train_data, cfg.model.max_seqlen)
     train_data = MaskedTokenWrapperDataset(
         train_data,
@@ -102,13 +104,33 @@ def train(cfg: Config) -> None:
         cfg.train.random_token_prob,
         cfg.train.random_token_prob,
     )
-    sampler = BatchBySequenceLength(train_data, cfg.train.max_tokens, shuffle=True)
+    train_sampler = BatchBySequenceLength(train_data, cfg.train.max_tokens, shuffle=True)
     train_loader: torch.utils.data.DataLoader = torch.utils.data.DataLoader(
         train_data,
-        batch_sampler=sampler,
+        batch_sampler=train_sampler,
         num_workers=cfg.data.num_workers,
         collate_fn=train_data.collater,
     )
+
+    if cfg.data.valid_fasta_path:
+        valid_sequence_data = EncodedFastaDataset(cfg.data.valid_fasta_path, vocab)
+        valid_sequence_data = RandomCropDataset(valid_sequence_data, cfg.model.max_seqlen)
+        valid_sequence_data = MaskedTokenWrapperDataset(
+            valid_sequence_data,
+            cfg.train.mask_prob,
+            cfg.train.random_token_prob,
+            cfg.train.random_token_prob,
+        )
+        valid_sequence_sampler = BatchBySequenceLength(valid_sequence_data, cfg.train.max_tokens, shuffle=True)
+        valid_sequence_loader: torch.utils.data.DataLoader = torch.utils.data.DataLoader(
+            valid_sequence_data,
+            batch_sampler=valid_sequence_sampler,
+            num_workers=cfg.data.num_workers,
+            collate_fn=train_data.collater,
+        )
+    else:
+        valid_sequence_loader = None
+
 
     with open(Path(cfg.data.trrosetta_path) / cfg.data.trrosetta_train_split) as f:
         train_pdbs = f.read().splitlines()
@@ -130,7 +152,7 @@ def train(cfg: Config) -> None:
         max_seqs_per_msa=1,
     )
 
-    valid_loader: torch.utils.data.DataLoader = torch.utils.data.DataLoader(
+    valid_contact_loader: torch.utils.data.DataLoader = torch.utils.data.DataLoader(
         trrosetta_valid_data,
         batch_size=cfg.train.valid_batch_size,
         num_workers=cfg.data.num_workers,
@@ -156,18 +178,32 @@ def train(cfg: Config) -> None:
         logger.log_hyperparams(cfg.model)  # type: ignore
         logger.log_hyperparams(cfg.optimizer)  # type: ignore
 
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+    class ContactModelCheckpoint(pl.callbacks.ModelCheckpoint):
+        def on_validation_epoch_end(self, trainer, pl_module):
+            # Only save if the monitored metric exists (i.e., contact validation ran)
+            if "valid/Long Range P@L" in trainer.callback_metrics:
+                super().on_validation_epoch_end(trainer, pl_module)
+    
+    checkpoint_callback = ContactModelCheckpoint(
         monitor="valid/Long Range P@L",
         mode="max",
         dirpath=current_directory / "checkpoints",
         save_top_k=5,
     )
+    # # Currently it stops too early so I had to disable it. I think it's because I was testing too often and initially the model
+    # # performance looks like it is going down.
+    #
     # early_stopping_callback = pl.callbacks.EarlyStopping(
     #     monitor="valid/Long Range P@L",
     #     mode="max",
     #     patience=cfg.train.patience,
     # )
     lr_logger = pl.callbacks.LearningRateMonitor()
+
+    if valid_sequence_loader is None:
+        val_loader = CombinedLoader({"P@L": valid_contact_loader}, mode="max_size_cycle")
+    else:
+        val_loader = CombinedLoader({"P@L": valid_contact_loader, "sequence": valid_sequence_loader}, mode="max_size_cycle")
 
     # See https://lightning.ai/docs/pytorch/stable/upgrade/from_1_4.html for:
     trainer = pl.Trainer(
@@ -189,7 +225,7 @@ def train(cfg: Config) -> None:
         use_distributed_sampler=False,
     )
 
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader, ckpt_path=cfg.resume_from_checkpoint)
+    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=val_loader, ckpt_path=cfg.resume_from_checkpoint)
 
 
 if __name__ == "__main__":
