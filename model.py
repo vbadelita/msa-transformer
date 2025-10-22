@@ -165,7 +165,7 @@ class BaseProteinModel(pl.LightningModule, ABC):
         perplexity = loss.float().exp().mean()
         loss = loss.mean()
 
-        self.log("train/loss", loss)
+        self.log("train/loss", loss, prog_bar=True)
         self.log("train/perplexity", perplexity, prog_bar=True)
 
         return loss
@@ -179,9 +179,35 @@ class BaseProteinModel(pl.LightningModule, ABC):
             minsep=24,
         )
 
+        # # Compute LM loss on tokens (do not use contact targets)
+        # src_tokens = batch["src_tokens"]
+        # logits = self(src_tokens)["logits"]  # (..., T, V)
+
+        # # Next-token prediction: shift tokens to form targets
+        # # Supports both 2D (B, T) and 3D (B, R, C) token tensors
+        # lm_tgt = src_tokens[..., 1:]
+        # lm_logits = logits[..., :-1, :]
+
+        # # Flatten to (N, V) and (N,) for CrossEntropyLoss
+        # num_classes = lm_logits.size(-1)
+        # lm_logits_flat = lm_logits.reshape(-1, num_classes)
+        # lm_tgt_flat = lm_tgt.reshape(-1)
+
+        # # Mask out pads
+        # valid_mask_flat = lm_tgt_flat != self.vocab.pad_idx
+        # lm_logits_flat = lm_logits_flat[valid_mask_flat]
+        # lm_tgt_flat = lm_tgt_flat[valid_mask_flat]
+
+        # loss = nn.CrossEntropyLoss(reduction="none")(lm_logits_flat, lm_tgt_flat)
+        # perplexity = loss.float().exp().mean()
+        # loss = loss.mean()
+
+        # self.log("valid/loss", loss, prog_bar=True)
+        # self.log("valid/perplexity", perplexity, prog_bar=True)
+
         for key, value in metrics.items():
             key = f"valid/Long Range {key}"
-            self.log(key, value, prog_bar=key.endswith("P@L"))
+            self.log(key, value.mean(), prog_bar=key.endswith("P@L"))
         return metrics["P@L"]
 
     def configure_optimizers(self):

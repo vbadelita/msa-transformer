@@ -77,7 +77,7 @@ class Config:
     logging: LoggingConfig = LoggingConfig()
     fast_dev_run: bool = False
     resume_from_checkpoint: Optional[str] = None
-    val_check_interval: int = 5000
+    val_check_interval: int = 1000  # Run validation every 1000 steps instead of 5000
 
 
 cs = ConfigStore.instance()
@@ -150,45 +150,46 @@ def train(cfg: Config) -> None:
         else True
     )
 
-    if isinstance(logger, pl.loggers.LightningLoggerBase):
-        logger.log_hyperparams(cfg.train)  # type: ignore
-        logger.log_hyperparams(cfg.model)  # type: ignore
-        logger.log_hyperparams(cfg.optimizer)  # type: ignore
+    # if isinstance(logger, pl.loggers.LightningLoggerBase):
+    #     logger.log_hyperparams(cfg.train)  # type: ignore
+    #     logger.log_hyperparams(cfg.model)  # type: ignore
+    #     logger.log_hyperparams(cfg.optimizer)  # type: ignore
 
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
         monitor="valid/Long Range P@L",
         mode="max",
+        dirpath=current_directory / "checkpoints",
         save_top_k=5,
     )
     early_stopping_callback = pl.callbacks.EarlyStopping(
         monitor="valid/Long Range P@L",
         mode="max",
+        min_delta=0.1,
         patience=cfg.train.patience,
     )
     lr_logger = pl.callbacks.LearningRateMonitor()
 
+    # See https://lightning.ai/docs/pytorch/stable/upgrade/from_1_4.html for:
     trainer = pl.Trainer(
         logger=logger,
         callbacks=[early_stopping_callback, lr_logger, checkpoint_callback],
         accumulate_grad_batches=cfg.train.accumulate_grad_batches,
         accelerator=cfg.train.accelerator,
         fast_dev_run=cfg.fast_dev_run,
-        gpus=cfg.train.gpus,
+        devices=cfg.train.gpus,
         gradient_clip_val=cfg.train.gradient_clip_val,
         log_every_n_steps=cfg.logging.log_every_n_steps,
         max_epochs=cfg.train.max_epochs,
         max_steps=cfg.optimizer.max_steps,
         num_nodes=cfg.train.num_nodes,
         precision=cfg.train.precision,
-        progress_bar_refresh_rate=cfg.logging.progress_bar_refresh_rate,
-        resume_from_checkpoint=cfg.resume_from_checkpoint,
-        track_grad_norm=cfg.logging.track_grad_norm,
-        val_check_interval=cfg.val_check_interval * cfg.train.accumulate_grad_batches,
-        replace_sampler_ddp=False,
-        plugins=[pl.plugins.DDPPlugin(find_unused_parameters=False)],
+        # val_check_interval=cfg.val_check_interval * cfg.train.accumulate_grad_batches,
+        val_check_interval=0.2,
+        strategy="ddp",
+        use_distributed_sampler=False,
     )
 
-    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader)
+    trainer.fit(model, train_dataloaders=train_loader, val_dataloaders=valid_loader, ckpt_path=cfg.resume_from_checkpoint)
 
 
 if __name__ == "__main__":
