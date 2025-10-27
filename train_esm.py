@@ -93,7 +93,7 @@ cs.store(group="logging", name="default", node=LoggingConfig)
 
 @hydra.main(config_name="config")
 def train(cfg: Config) -> None:
-    torch.set_float32_matmul_precision('medium')
+    torch.set_float32_matmul_precision('high')
     alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
     vocab = Vocab.from_esm_alphabet(alphabet)
     train_data = EncodedFastaDataset(cfg.data.train_fasta_path, vocab)
@@ -190,6 +190,15 @@ def train(cfg: Config) -> None:
         dirpath=current_directory / "checkpoints",
         save_top_k=5,
     )
+    # Add a checkpoint callback to save at end of each epoch (not just on improved metric)
+    end_of_epoch_checkpoint = pl.callbacks.ModelCheckpoint(
+        dirpath=current_directory / "checkpoints",
+        filename="epoch_{epoch:02d}",
+        save_top_k=-1,  # keep all
+        every_n_epochs=1,
+        save_last=False,
+        save_on_train_epoch_end=True,
+    )
     # # Currently it stops too early so I had to disable it. I think it's because I was testing too often and initially the model
     # # performance looks like it is going down.
     #
@@ -208,7 +217,7 @@ def train(cfg: Config) -> None:
     # See https://lightning.ai/docs/pytorch/stable/upgrade/from_1_4.html for:
     trainer = pl.Trainer(
         logger=logger,
-        callbacks=[lr_logger, checkpoint_callback],
+        callbacks=[lr_logger, checkpoint_callback, end_of_epoch_checkpoint],
         accumulate_grad_batches=cfg.train.accumulate_grad_batches,
         accelerator=cfg.train.accelerator,
         fast_dev_run=cfg.fast_dev_run,
