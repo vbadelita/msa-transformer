@@ -2,5 +2,4 @@ pytorch_lightning
 numpy
 hydra-core
 scikit-learn
-# git+https://github.com/rmrao/evo@main#egg=evo
--e ./evo
+git+https://github.com/vbadelita/evo@main#egg=evo
