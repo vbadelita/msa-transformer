@@ -162,8 +162,8 @@ class BaseProteinModel(pl.LightningModule, ABC):
         logits = logits[valid_mask]
         tgt = tgt[valid_mask]
         loss = nn.CrossEntropyLoss(reduction="none")(logits, tgt)
-        perplexity = loss.float().exp().mean()
         loss = loss.mean()
+        perplexity = loss.float().exp()
 
         self.log(f"{log_name}/loss", loss, prog_bar=True)
         self.log(f"{log_name}/perplexity", perplexity, prog_bar=True)
