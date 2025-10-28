@@ -185,15 +185,18 @@ def train(cfg: Config) -> None:
                 super().on_validation_epoch_end(trainer, pl_module)
     
     checkpoint_callback = ContactModelCheckpoint(
-        monitor="valid/Long Range P@L",
-        mode="max",
-        dirpath=current_directory / "checkpoints",
-        save_top_k=5,
+    	monitor="valid/Long Range P@L",
+    	mode="max",
+    	dirpath=current_directory / "checkpoints",
+    	filename="best-epoch{epoch:02d}-step{step}",
+    	auto_insert_metric_name=False,
+    	save_top_k=5,
     )
     # Add a checkpoint callback to save at end of each epoch (not just on improved metric)
     end_of_epoch_checkpoint = pl.callbacks.ModelCheckpoint(
         dirpath=current_directory / "checkpoints",
-        filename="epoch_{epoch:02d}",
+        filename="epoch{epoch:02d}",
+        auto_insert_metric_name=False,
         save_top_k=-1,  # keep all
         every_n_epochs=1,
         save_last=False,
