@@ -45,15 +45,15 @@ class DataConfig:
 
 @dataclass
 class TrainConfig:
-    max_tokens: int = 2 ** 13
+    max_tokens: int = 2 ** 15
     valid_batch_size: int = 2
     accumulate_grad_batches: int = 1
     accelerator: Optional[str] = None
     gpus: int = 1
     gradient_clip_val: float = 1.0
-    max_epochs: int = 1000
+    max_epochs: int = 100
     num_nodes: int = 1
-    precision: str = "32"
+    precision: str = "16-mixed"
     patience: int = 10
     mask_prob: float = 0.15
     random_token_prob: float = 0.1
@@ -94,6 +94,7 @@ cs.store(group="logging", name="default", node=LoggingConfig)
 @hydra.main(config_name="config")
 def train(cfg: Config) -> None:
     torch.set_float32_matmul_precision('high')
+
     alphabet = esm.data.Alphabet.from_architecture("ESM-1b")
     vocab = Vocab.from_esm_alphabet(alphabet)
     train_data = EncodedFastaDataset(cfg.data.train_fasta_path, vocab)
@@ -110,6 +111,8 @@ def train(cfg: Config) -> None:
         batch_sampler=train_sampler,
         num_workers=cfg.data.num_workers,
         collate_fn=train_data.collater,
+        pin_memory=True,
+        persistent_workers=True
     )
 
     if cfg.data.valid_fasta_path:
