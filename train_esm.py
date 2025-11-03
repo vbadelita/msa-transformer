@@ -191,7 +191,7 @@ def train(cfg: Config) -> None:
     	monitor="valid/Long Range P@L",
     	mode="max",
     	dirpath=current_directory / "checkpoints",
-    	filename="best-epoch{epoch:02d}-step{step}",
+    	filename="epoch{epoch:02d}-step{step}",
     	auto_insert_metric_name=False,
     	save_top_k=5,
     )
@@ -205,6 +205,11 @@ def train(cfg: Config) -> None:
         save_last=False,
         save_on_train_epoch_end=True,
     )
+    # Get the WandB run name if using WandB logger
+    if isinstance(logger, pl.loggers.WandbLogger):
+        run_name = logger.experiment.name
+        checkpoint_callback.filename = f"{run_name}-epoch{{epoch:02d}}-step{{step}}"
+        end_of_epoch_checkpoint.filename = f"{run_name}-epoch{{epoch:02d}}"
     # # Currently it stops too early so I had to disable it. I think it's because I was testing too often and initially the model
     # # performance looks like it is going down.
     #
