@@ -39,8 +39,9 @@ class DataConfig:
     valid_fasta_path: Optional[str] = None
     trrosetta_path: str = str(current_directory / "data" / "trrosetta")
     trrosetta_train_split: str = "valid_train.txt"
-    trrosetta_valid_split: str = "valid_test.txt"
+    trrosetta_valsid_split: str = "valid_test.txt"
     num_workers: int = 3
+    prefetch_factor: int = 2
 
 
 @dataclass
@@ -112,7 +113,8 @@ def train(cfg: Config) -> None:
         num_workers=cfg.data.num_workers,
         collate_fn=train_data.collater,
         pin_memory=True,
-        persistent_workers=True
+        persistent_workers=True,
+        prefetch_factor=cfg.data.prefetch_factor,
     )
 
     if cfg.data.valid_fasta_path:
