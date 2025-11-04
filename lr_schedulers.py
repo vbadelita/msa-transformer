@@ -39,6 +39,7 @@ class ConstantLRSchedule(LambdaLR):
         )  # type: ignore
 
 
+
 class WarmupConstantSchedule(LambdaLR):
     """Linear warmup and then constant.
     Linearly increases learning rate schedule from 0 to 1 over `warmup_steps`
@@ -51,15 +52,21 @@ class WarmupConstantSchedule(LambdaLR):
         warmup_steps: int,
         t_total: Optional[int] = None,
         last_epoch: int = -1,
+        warmup_start: Optional[float] = 0.5
     ):
         self.warmup_steps = warmup_steps
+        self.warmup_start = warmup_start
         super(WarmupConstantSchedule, self).__init__(
             optimizer, self.lr_lambda, last_epoch=last_epoch
         )  # type: ignore
 
     def lr_lambda(self, step):
         if step < self.warmup_steps:
-            return float(step) / float(max(1.0, self.warmup_steps))
+            rate = float(step) / float(max(1.0, self.warmup_steps))
+            if self.warmup_start:
+                return self.warmup_start + (1.0 - self.warmup_start) * rate
+            else:
+                return rate
         return 1.0
 
 

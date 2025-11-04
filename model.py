@@ -1,4 +1,5 @@
 from typing import Optional, Tuple, List, Union
+import time
 from abc import ABC, abstractmethod
 import torch
 import torch.nn as nn
@@ -64,6 +65,7 @@ class OptimizerConfig:
     warmup_steps: int = 16000
     adam_betas: Tuple[float, float] = (0.9, 0.999)
     max_steps: int = 1000000
+    warmup_start: Optional[float] = None
 
 
 class BaseProteinModel(pl.LightningModule, ABC):
@@ -77,6 +79,10 @@ class BaseProteinModel(pl.LightningModule, ABC):
         self.vocab = vocab
         self.optimizer_config = optimizer_config
         self.contact_train_data = contact_train_data
+        # Training throughput tracking
+        self._last_batch_time: Optional[float] = None
+        self._tokens_since_last_opt_step: int = 0
+        self._time_since_last_opt_step: float = 0.0
 
     @abstractmethod
     def forward(
@@ -171,7 +177,67 @@ class BaseProteinModel(pl.LightningModule, ABC):
         return loss
 
     def training_step(self, batch, batch_idx):
+        # Measure tokens per batch (non-pad tokens in the source)
+        src, _ = batch
+        batch_tokens = (src != self.vocab.pad_idx).sum()
+        # Log immediate per-iteration token count
+        self.log("train/tokens_per_iteration", batch_tokens.to(dtype=torch.float32), on_step=True, prog_bar=False)
         return self.validate_protein_language(batch, log_name="train")
+
+    def on_train_batch_start(self, batch, batch_idx):
+        # Start batch timer
+        self._last_batch_time = time.time()
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        # Update throughput metrics
+        now = time.time()
+        if self._last_batch_time is not None:
+            dt = max(now - self._last_batch_time, 1e-8)
+        else:
+            dt = 0.0
+
+        src, _ = batch
+        batch_tokens = (src != self.vocab.pad_idx).sum().item()
+
+        # Instantaneous rates
+        if dt > 0.0:
+            self.log("train/iterations_per_second", torch.tensor(1.0 / dt, device=self.device), on_step=True, prog_bar=False)
+            self.log(
+                "train/tokens_per_second",
+                torch.tensor(batch_tokens / dt, device=self.device, dtype=torch.float32),
+                on_step=True,
+                prog_bar=True,
+            )
+
+        # Accumulate towards optimizer step
+        self._tokens_since_last_opt_step += int(batch_tokens)
+        self._time_since_last_opt_step += float(dt)
+
+        # If we've reached an optimizer step boundary, log effective metrics
+        accumulate = getattr(self.trainer, "accumulate_grad_batches", 1)
+        if accumulate is None:
+            accumulate = 1
+        if (batch_idx + 1) % int(accumulate) == 0:
+            if self._time_since_last_opt_step > 0.0:
+                self.log(
+                    "train/effective_tokens_per_optimizer_step",
+                    torch.tensor(self._tokens_since_last_opt_step, device=self.device, dtype=torch.float32),
+                    on_step=True,
+                    prog_bar=False,
+                )
+                self.log(
+                    "train/tokens_per_second_optimizer_step",
+                    torch.tensor(
+                        self._tokens_since_last_opt_step / self._time_since_last_opt_step,
+                        device=self.device,
+                        dtype=torch.float32,
+                    ),
+                    on_step=True,
+                    prog_bar=False,
+                )
+            # Reset accumulators
+            self._tokens_since_last_opt_step = 0
+            self._time_since_last_opt_step = 0.0
 
     def validate_protein_contact(self, batch):
         predictions = self.predict_contacts(batch["src_tokens"])
@@ -249,6 +315,7 @@ class BaseProteinModel(pl.LightningModule, ABC):
             optimizer,
             self.optimizer_config.warmup_steps,
             self.optimizer_config.max_steps,
+            # warmup_start=self.optimizer_config.warmup_start
         )
 
         scheduler_dict = {"scheduler": scheduler, "interval": "step"}
