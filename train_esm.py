@@ -39,7 +39,7 @@ class DataConfig:
     valid_fasta_path: Optional[str] = None
     trrosetta_path: str = str(current_directory / "data" / "trrosetta")
     trrosetta_train_split: str = "valid_train.txt"
-    trrosetta_valsid_split: str = "valid_test.txt"
+    trrosetta_valid_split: str = "valid_test.txt"
     num_workers: int = 3
     prefetch_factor: int = 2
 
