@@ -299,18 +299,27 @@ class BaseProteinModel(pl.LightningModule, ABC):
         ]
 
         if self.optimizer_config.name == "adam":
-            optimizer_type = torch.optim.AdamW
+            optimizer = torch.optim.AdamW(
+                optimizer_grouped_parameters,
+                lr=self.optimizer_config.learning_rate,
+                betas=self.optimizer_config.adam_betas,
+            )   
+        elif self.optimizer_config.name == "sgd":
+            optimizer = torch.optim.SGD(
+                optimizer_grouped_parameters,
+                lr=self.optimizer_config.learning_rate,
+                momentum=0.9,
+            )
         elif self.optimizer_config.name == "lamb":
             try:
                 from apex.optimizers import FusedLAMB
             except ImportError:
                 raise ImportError("Apex must be installed to use FusedLAMB optimizer.")
-            optimizer_type = FusedLAMB
-        optimizer = optimizer_type(
-            optimizer_grouped_parameters,
-            lr=self.optimizer_config.learning_rate,
-            betas=self.optimizer_config.adam_betas,
-        )
+            optimizer = FusedLAMB(
+                optimizer_grouped_parameters,
+                lr=self.optimizer_config.learning_rate,
+            )
+
         scheduler = lr_schedulers.get(self.optimizer_config.lr_scheduler)(
             optimizer,
             self.optimizer_config.warmup_steps,
